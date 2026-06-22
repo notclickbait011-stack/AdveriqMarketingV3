@@ -125,7 +125,10 @@
   function createScrubVideo(opts) {
     const ST = window.ScrollTrigger;
     const video = opts.video;
+    let built = false;
     const setup = () => {
+      if (built) return; // guard so it only ever builds the pin once
+      built = true;
       ST.create({
         trigger: opts.section,
         start: 'top top',
@@ -136,16 +139,25 @@
         invalidateOnRefresh: true,
         onUpdate: (self) => {
           if (opts.onProgress) opts.onProgress(self.progress);
-          if (!video.duration) return;
+          if (!video.duration) return; // NaN-safe (e.g. video not loaded)
           video.currentTime = self.progress * video.duration; // direct, continuous mapping
         },
       });
       ST.refresh();
     };
-    // Item 2: bind the timeline only AFTER metadata is known, so video.duration
-    // is never NaN. (onUpdate also guards `if (!video.duration) return`.)
+    // Bind the timeline only AFTER metadata is known so video.duration is never NaN.
     if (video.readyState >= 1) setup();
-    else video.addEventListener('loadedmetadata', setup, { once: true });
+    else {
+      video.addEventListener('loadedmetadata', setup, { once: true });
+      // RESILIENCE: if the video errors (e.g. 404 / missing on the host) or stalls,
+      // still create the pinned section so the page layout & scroll downstream stay
+      // correct. The section just shows its poster instead of scrubbing — it can
+      // never break the sections below it.
+      video.addEventListener('error', setup, { once: true });
+      var src = video.querySelector('source');
+      if (src) src.addEventListener('error', setup, { once: true });
+      setTimeout(setup, 3000);
+    }
     // When the video's data actually arrives over the network, recompute pin bounds.
     video.addEventListener('loadeddata', function () {
       try { ST.refresh(); } catch (e) {}
